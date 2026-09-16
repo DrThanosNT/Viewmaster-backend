@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment variables - never commit real secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Prisma
+# (schema.prisma should be committed, but not local dev database files if using SQLite)
+*.db
+*.db-journal
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# Build output (if you ever add one)
+dist/
+build/
