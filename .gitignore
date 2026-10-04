@@ -1,29 +1,37 @@
 # Dependencies
 node_modules/
 
-# Environment variables - never commit real secrets
+# Environment files - real secrets never get committed.
+# .env.example is the one exception (placeholders only).
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Keys, certificates and backups
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.backup
 
 # Logs
 *.log
 npm-debug.log*
 
-# Prisma
-# (schema.prisma should be committed, but not local dev database files if using SQLite)
+# Local database files
 *.db
 *.db-journal
 
-# OS-generated files
+# OS files
 .DS_Store
 Thumbs.db
 
-# Editor/IDE
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
 
-# Build output (if you ever add one)
+# Build output
 dist/
 build/
