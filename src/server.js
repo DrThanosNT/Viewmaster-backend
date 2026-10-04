@@ -6,12 +6,12 @@ const authRoutes = require('./routes/auth');
 const locationRoutes = require('./routes/locations');
 const itemRoutes = require('./routes/items');
 const movementRoutes = require('./routes/movements');
-const consumableRoutes = require('./routes/consumables');
+const stockRoutes = require('./routes/stock');
 const eventRoutes = require('./routes/events');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' })); // profile photos are base64 - default body limit is too small
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -19,7 +19,7 @@ app.use('/auth', authRoutes);
 app.use('/locations', locationRoutes);
 app.use('/items', itemRoutes);
 app.use('/movements', movementRoutes);
-app.use('/consumables', consumableRoutes);
+app.use('/stock', stockRoutes);
 app.use('/events', eventRoutes);
 
 app.use((err, req, res, next) => {

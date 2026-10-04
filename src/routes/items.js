@@ -15,11 +15,6 @@ router.get('/', async (req, res) => {
     },
     include: {
       stock: { include: { location: true } },
-      consumableLogs: {
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-        include: { location: true },
-      },
     },
     orderBy: { name: 'asc' },
   });
@@ -35,11 +30,6 @@ router.get('/:id', async (req, res) => {
         orderBy: { createdAt: 'desc' },
         take: 25,
         include: { fromLocation: true, toLocation: true, movedBy: true },
-      },
-      consumableLogs: {
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-        include: { location: true, setBy: true },
       },
     },
   });

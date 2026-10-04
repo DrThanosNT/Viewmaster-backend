@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  WORKER
+  MANAGER
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  phone        String?  @unique
+  email        String?  @unique
+  passwordHash String
+  role         Role     @default(WORKER)
+  photoUrl     String?
+  createdAt    DateTime @default(now())
+
+  movements Movement[] @relation("MovedBy")
+}
+
+enum LocationType {
+  STORAGE
+  VEHICLE
+  OTHER
+}
+
+model Location {
+  id        String       @id @default(cuid())
+  name      String
+  type      LocationType
+  address   String?
+  latitude  Float?
+  longitude Float?
+  isActive  Boolean      @default(true)
+  isSystem  Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  stock          Stock[]
+  movementsFrom  Movement[]      @relation("FromLocation")
+  movementsTo    Movement[]      @relation("ToLocation")
+  eventLocations EventLocation[]
+}
+
+// Events group one or more non-storage locations under a name and time
+// period. They never get deleted automatically - a location may still
+// hold stock after the period ends, so the event stays around until an
+// admin explicitly deletes it (and only once it's empty).
+model Event {
+  id        String   @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+
+  eventLocations EventLocation[]
+  stock          Stock[]
+  movements      Movement[]
+}
+
+// Many-to-many: a location can belong to several events at once, and an
+// event can have several locations.
+model EventLocation {
+  id         String   @id @default(cuid())
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId    String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  locationId String
+  createdAt  DateTime @default(now())
+
+  @@unique([eventId, locationId])
+}
+
+enum ItemKind {
+  DISCRETE
+  CONSUMABLE
+}
+
+model Item {
+  id         String   @id @default(cuid())
+  name       String
+  kind       ItemKind @default(DISCRETE)
+  category   String?
+  notes      String?
+  photoUrl   String?
+  isBroken   Boolean  @default(false)
+  brokenNote String?
+  createdAt  DateTime @default(now())
+
+  stock     Stock[]
+  movements Movement[]
+}
+
+// Stock is now keyed by (item, location, event) - the same item at the
+// same location can have a separate bucket per event it's tagged under,
+// plus one "no event" bucket (eventId null) for ordinary storage stock.
+model Stock {
+  id                String   @id @default(cuid())
+  item              Item     @relation(fields: [itemId], references: [id])
+  itemId            String
+  location          Location @relation(fields: [locationId], references: [id])
+  locationId        String
+  event             Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId           String?
+  quantity          Int      @default(0)
+  damagedQuantity   Int      @default(0)
+  temporaryQuantity Int      @default(0)
+  runningLow        Boolean  @default(false)
+  updatedAt         DateTime @updatedAt
+
+  @@unique([itemId, locationId, eventId])
+}
+
+model Movement {
+  id             String    @id @default(cuid())
+  item           Item      @relation(fields: [itemId], references: [id])
+  itemId         String
+  quantity       Int       @default(1)
+  fromLocation   Location? @relation("FromLocation", fields: [fromLocationId], references: [id])
+  fromLocationId String?
+  toLocation     Location  @relation("ToLocation", fields: [toLocationId], references: [id])
+  toLocationId   String
+  event          Event?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId        String?
+  movedBy        User?     @relation("MovedBy", fields: [movedById], references: [id])
+  movedById      String?
+  note           String?
+  photoUrl       String?
+  batchId        String?
+  isDamage       Boolean   @default(false)
+  isTemporary    Boolean   @default(false)
+  isRepair       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+}
