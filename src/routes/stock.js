@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../prismaClient');
 const { requireAuth } = require('../middleware/auth');
+const { sendError } = require('../utils/httpError');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -30,13 +31,13 @@ router.patch('/running-low', async (req, res) => {
   }
   try {
     const updated = await prisma.stock.update({
-      where: { itemId_locationId_eventId: { itemId, locationId, eventId } },
+      where: { itemId_locationId_eventKey: { itemId, locationId, eventKey: eventId || 'none' } },
       data: { runningLow: value },
       include: { item: true, location: true },
     });
     res.json(updated);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 

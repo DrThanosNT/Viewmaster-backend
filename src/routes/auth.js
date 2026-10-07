@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prismaClient');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { HttpError, sendError } = require('../utils/httpError');
 
 const router = express.Router();
 
@@ -29,20 +30,23 @@ function clearAttempts(key) { loginAttempts.delete(key); }
 router.post('/register', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {
     const { name, phone, email, password, role } = req.body;
-    if (!name || !password) return res.status(400).json({ error: 'name and password are required' });
+    if (!name || !password) throw new HttpError(400, 'Χρειάζονται όνομα και κωδικός.');
     const allowedRoles = ['WORKER', 'MANAGER', 'ADMIN'];
     const finalRole = allowedRoles.includes(role) ? role : 'WORKER';
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({ data: { name, phone, email, passwordHash, role: finalRole } });
     res.status(201).json({ id: user.id, name: user.name, role: user.role });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
 router.post('/login', async (req, res) => {
   const { phone, email, password } = req.body;
-  const identifier = phone || email || 'unknown';
+  if (!password || (!phone && !email)) {
+    return res.status(400).json({ error: 'Χρειάζονται τηλέφωνο και κωδικός.' });
+  }
+  const identifier = phone || email;
   const key = `${identifier}:${getClientIp(req)}`;
   if (isRateLimited(key)) return res.status(429).json({ error: 'Πάρα πολλές προσπάθειες. Δοκίμασε ξανά σε λίγο.' });
 
@@ -55,14 +59,14 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, name: user.name, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
     res.json({ token, user: { id: user.id, name: user.name, role: user.role, photoUrl: user.photoUrl } });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
 router.patch('/me/photo', requireAuth, async (req, res) => {
   try {
     const { photoUrl } = req.body;
-    if (typeof photoUrl !== 'string' && photoUrl !== null) return res.status(400).json({ error: 'photoUrl must be a string or null' });
+    if (typeof photoUrl !== 'string' && photoUrl !== null) throw new HttpError(400, 'photoUrl must be a string or null');
     const user = await prisma.user.update({
       where: { id: req.user.id },
       data: { photoUrl },
@@ -70,15 +74,15 @@ router.patch('/me/photo', requireAuth, async (req, res) => {
     });
     res.json(user);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
 router.patch('/users/:id/role', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {
-    if (req.params.id === req.user.id) return res.status(400).json({ error: 'Δεν μπορείς να αλλάξεις τον δικό σου ρόλο.' });
+    if (req.params.id === req.user.id) throw new HttpError(400, 'Δεν μπορείς να αλλάξεις τον δικό σου ρόλο.');
     const { role } = req.body;
-    if (!['WORKER', 'MANAGER', 'ADMIN'].includes(role)) return res.status(400).json({ error: 'Μη έγκυρος ρόλος.' });
+    if (!['WORKER', 'MANAGER', 'ADMIN'].includes(role)) throw new HttpError(400, 'Μη έγκυρος ρόλος.');
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: { role },
@@ -86,17 +90,19 @@ router.patch('/users/:id/role', requireAuth, requireRole('ADMIN'), async (req, r
     });
     res.json(user);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
+// Real delete. Log entries keep the member's name (copied into them); only
+// the link and the photo are lost.
 router.delete('/users/:id', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {
-    if (req.params.id === req.user.id) return res.status(400).json({ error: 'Δεν μπορείς να διαγράψεις τον εαυτό σου.' });
+    if (req.params.id === req.user.id) throw new HttpError(400, 'Δεν μπορείς να διαγράψεις τον εαυτό σου.');
     await prisma.user.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 

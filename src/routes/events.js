@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../prismaClient');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { HttpError, sendError } = require('../utils/httpError');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -22,29 +23,23 @@ router.get('/:id', async (req, res) => {
   res.json(event);
 });
 
-// POST /events - admin picks a name, a time period, and 1+ EXISTING
-// non-storage locations. No new Location rows are created here - this
-// solves the "typing a fresh location name each time" problem by only
-// ever linking to the canonical, already-admin-maintained location list.
+// An event is a name, a time period, and 1+ EXISTING non-storage locations.
 router.post('/', requireRole('ADMIN'), async (req, res) => {
   try {
-    const { name, startDate, endDate, locationIds } = req.body;
+    const { startDate, endDate, locationIds } = req.body;
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (!name || !startDate || !endDate || !Array.isArray(locationIds) || locationIds.length === 0) {
-      return res.status(400).json({ error: 'name, startDate, endDate and at least one locationId are required' });
+      throw new HttpError(400, 'Χρειάζονται όνομα, χρονικό διάστημα και τουλάχιστον μία τοποθεσία.');
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
-      return res.status(400).json({ error: 'Μη έγκυρο χρονικό διάστημα.' });
+      throw new HttpError(400, 'Μη έγκυρο χρονικό διάστημα.');
     }
 
     const locations = await prisma.location.findMany({ where: { id: { in: locationIds } } });
-    if (locations.length !== locationIds.length) {
-      return res.status(400).json({ error: 'Μία ή περισσότερες τοποθεσίες δεν βρέθηκαν.' });
-    }
-    if (locations.some((l) => l.type === 'STORAGE')) {
-      return res.status(400).json({ error: 'Δεν μπορείς να προσθέσεις αποθήκες σε εκδήλωση.' });
-    }
+    if (locations.length !== locationIds.length) throw new HttpError(400, 'Μία ή περισσότερες τοποθεσίες δεν βρέθηκαν.');
+    if (locations.some((l) => l.type === 'STORAGE')) throw new HttpError(400, 'Δεν μπορείς να προσθέσεις αποθήκες σε εκδήλωση.');
 
     const event = await prisma.$transaction(async (tx) => {
       const created = await tx.event.create({ data: { name, startDate: start, endDate: end } });
@@ -59,7 +54,7 @@ router.post('/', requireRole('ADMIN'), async (req, res) => {
 
     res.status(201).json(event);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
@@ -76,30 +71,34 @@ router.patch('/:id', requireRole('ADMIN'), async (req, res) => {
     });
     res.json(event);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
-// DELETE /events/:id - only allowed once every stock bucket tagged with
-// this event is fully empty (usable, damaged and temporary all zero),
-// across every location it's linked to.
+// Real delete, refused while any stock is still tagged to the event. Log
+// entries keep the event's name; its locations stay.
 router.delete('/:id', requireRole('ADMIN'), async (req, res) => {
   try {
-    const stock = await prisma.stock.findMany({
-      where: {
-        eventId: req.params.id,
-        OR: [{ quantity: { gt: 0 } }, { damagedQuantity: { gt: 0 } }, { temporaryQuantity: { gt: 0 } }],
-      },
-    });
-    if (stock.length > 0) {
-      return res.status(400).json({
-        error: 'Δεν μπορείς να διαγράψεις αυτή την εκδήλωση - υπάρχει ακόμα απόθεμα σε αυτή.',
+    const id = req.params.id;
+    await prisma.$transaction(async (tx) => {
+      const event = await tx.event.findUnique({ where: { id } });
+      if (!event) throw new HttpError(404, 'Η εκδήλωση δεν βρέθηκε.');
+
+      const occupied = await tx.stock.count({
+        where: {
+          eventId: id,
+          OR: [{ quantity: { gt: 0 } }, { damagedQuantity: { gt: 0 } }, { temporaryQuantity: { gt: 0 } }],
+        },
       });
-    }
-    await prisma.event.delete({ where: { id: req.params.id } });
+      if (occupied > 0) throw new HttpError(400, 'Δεν μπορείς να διαγράψεις αυτή την εκδήλωση - υπάρχει ακόμα απόθεμα σε αυτή.');
+
+      await tx.stock.deleteMany({ where: { eventId: id } });
+      await tx.eventLocation.deleteMany({ where: { eventId: id } });
+      await tx.event.delete({ where: { id } });
+    });
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 });
 

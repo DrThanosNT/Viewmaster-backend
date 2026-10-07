@@ -109,33 +109,38 @@ model Stock {
   locationId        String
   event             Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
   eventId           String?
+  eventKey          String   @default("none")
   quantity          Int      @default(0)
   damagedQuantity   Int      @default(0)
   temporaryQuantity Int      @default(0)
   runningLow        Boolean  @default(false)
   updatedAt         DateTime @updatedAt
 
-  @@unique([itemId, locationId, eventId])
+  @@unique([itemId, locationId, eventKey])
 }
-
 model Movement {
-  id             String    @id @default(cuid())
-  item           Item      @relation(fields: [itemId], references: [id])
-  itemId         String
-  quantity       Int       @default(1)
-  fromLocation   Location? @relation("FromLocation", fields: [fromLocationId], references: [id])
-  fromLocationId String?
-  toLocation     Location  @relation("ToLocation", fields: [toLocationId], references: [id])
-  toLocationId   String
-  event          Event?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
-  eventId        String?
-  movedBy        User?     @relation("MovedBy", fields: [movedById], references: [id])
-  movedById      String?
-  note           String?
-  photoUrl       String?
-  batchId        String?
-  isDamage       Boolean   @default(false)
-  isTemporary    Boolean   @default(false)
-  isRepair       Boolean   @default(false)
-  createdAt      DateTime  @default(now())
+  id               String    @id @default(cuid())
+  item             Item?     @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  itemId           String?
+  itemName         String
+  quantity         Int       @default(1)
+  fromLocation     Location? @relation("FromLocation", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  fromLocationId   String?
+  fromLocationName String?
+  toLocation       Location? @relation("ToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
+  toLocationId     String?
+  toLocationName   String
+  event            Event?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId          String?
+  eventName        String?
+  movedBy          User?     @relation("MovedBy", fields: [movedById], references: [id], onDelete: SetNull)
+  movedById        String?
+  moverName        String?
+  note             String?
+  photoUrl         String?
+  batchId          String?
+  isDamage         Boolean   @default(false)
+  isTemporary      Boolean   @default(false)
+  isRepair         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
 }
