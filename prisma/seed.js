@@ -4,6 +4,12 @@ const crypto = require('crypto');
 
 const prisma = new PrismaClient();
 
+function daysFromNow(n) {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
 async function main() {
   console.log('Καθαρισμός παλιών δεδομένων...');
   await prisma.movement.deleteMany();
@@ -66,6 +72,7 @@ async function main() {
     [items['Κονσόλα ήχου'], storage2, 0, 0, 1],
     [items['Καρέκλες πτυσσόμενες'], storage3, 46, 4, 0],
     [items['Τραπέζια catering'], van1, 8, 0, 0],
+    [items['Φωτιστικό PAR'], van1, 0, 0, 2],
     [items['Μονωτική ταινία'], storage1, 3, 0, 0],
     [items['Δεματικά'], storage1, 500, 0, 0],
   ];
@@ -80,6 +87,17 @@ async function main() {
   await prisma.stock.update({
     where: { itemId_locationId_eventKey: { itemId: items['Μπουλόνια Μ10'].id, locationId: storage2.id, eventKey: 'none' } },
     data: { runningLow: true },
+  });
+
+  // Borrowed stock with a "should be gone by" date: the console is due in
+  // 3 days, the borrowed PAR lights are already 2 days late.
+  await prisma.stock.update({
+    where: { itemId_locationId_eventKey: { itemId: items['Κονσόλα ήχου'].id, locationId: storage2.id, eventKey: 'none' } },
+    data: { expectedReturnAt: daysFromNow(3) },
+  });
+  await prisma.stock.update({
+    where: { itemId_locationId_eventKey: { itemId: items['Φωτιστικό PAR'].id, locationId: van1.id, eventKey: 'none' } },
+    data: { expectedReturnAt: daysFromNow(-2) },
   });
 
   console.log('Δημιουργία ιστορικού καταγραφών...');
@@ -125,6 +143,9 @@ async function main() {
 
   // 6 days ago: Thanos took in a borrowed console
   await seedMovement({ item: items['Κονσόλα ήχου'], to: storage2, quantity: 1, movedBy: thanos, note: 'δανείστηκε από εξωτερικό συνεργάτη', isTemporary: true, when: daysAgo(6) });
+
+  // 4 days ago: Kostas borrowed 2 PAR lights for a concert
+  await seedMovement({ item: items['Φωτιστικό PAR'], to: van1, quantity: 2, movedBy: kostas, note: 'δανεικά για τη συναυλία', isTemporary: true, when: daysAgo(4) });
 
   // 5 days ago: Eleni marked 4 chairs as damaged at storage 3
   await seedMovement({ item: items['Καρέκλες πτυσσόμενες'], from: storage3, to: storage3, quantity: 4, movedBy: eleni, note: 'έσπασαν κατά τη μεταφορά', isDamage: true, when: daysAgo(5) });

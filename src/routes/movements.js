@@ -18,18 +18,37 @@ const stockWhere = (itemId, locationId, eventId) => ({
   itemId_locationId_eventKey: { itemId, locationId, eventKey: keyOf(eventId) },
 });
 
+// The optional "when should this borrowed stock be gone" date. Empty means
+// "no date"; anything that is not a real date is rejected before any line
+// of the batch is saved.
+function parseReturnDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new HttpError(400, 'Μη έγκυρη ημερομηνία επιστροφής.');
+  return date;
+}
+
+// One stock row can hold several borrowed batches. It keeps the SOONEST
+// deadline, so the row is flagged as soon as the first batch is due.
+function soonestDue(existingRow, incoming) {
+  const current = existingRow && existingRow.temporaryQuantity > 0 ? existingRow.expectedReturnAt : null;
+  if (current && incoming) return current < incoming ? current : incoming;
+  return current || incoming || null;
+}
+
 async function ensureSystemLocation(name) {
   let loc = await prisma.location.findFirst({ where: { name, isSystem: true } });
   if (!loc) loc = await prisma.location.create({ data: { name, type: 'OTHER', isSystem: true } });
   return loc;
 }
 
+// The destination is exactly what the app asked for: a plain location (no
+// event), or that location AS PART OF a specific event. Nothing is guessed,
+// so sending stock to a venue without an event keeps it event-free.
 async function resolveDestinationEventId(tx, locationId, requestedEventId) {
-  const links = await tx.eventLocation.findMany({ where: { locationId } });
-  if (links.length === 0) return null;
-  if (links.length === 1) return links[0].eventId;
-  if (!requestedEventId) throw new HttpError(400, 'Αυτή η τοποθεσία ανήκει σε πολλές εκδηλώσεις - επίλεξε για ποια εκδήλωση είναι.');
-  if (!links.some((l) => l.eventId === requestedEventId)) throw new HttpError(400, 'Μη έγκυρη εκδήλωση για αυτή την τοποθεσία.');
+  if (!requestedEventId) return null;
+  const link = await tx.eventLocation.findFirst({ where: { eventId: requestedEventId, locationId } });
+  if (!link) throw new HttpError(400, 'Η τοποθεσία δεν ανήκει σε αυτή την εκδήλωση.');
   return requestedEventId;
 }
 
@@ -87,15 +106,21 @@ router.post('/batch', async (req, res) => {
   if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: 'A non-empty lines array is required' });
   for (const line of lines) {
     if (!line.itemId || !line.toLocationId) return res.status(400).json({ error: 'Each line needs itemId and toLocationId' });
-    if (line.locationId && line.locationId === line.toLocationId) return res.status(400).json({ error: 'A line cannot have the same source and destination' });
+    // Same location is fine when the event differs (e.g. venue -> that venue for an event).
+    if (line.locationId && line.locationId === line.toLocationId && (line.fromEventId ?? null) === (line.toEventId ?? null)) {
+      return res.status(400).json({ error: 'Η προέλευση και ο προορισμός δεν μπορούν να είναι ίδια.' });
+    }
   }
   const batchId = crypto.randomUUID();
   try {
+    // Check every return date first, so a bad one can't leave the batch half-saved.
+    const dueDates = lines.map((line) => (!line.locationId && line.temporary ? parseReturnDate(line.expectedReturnAt) : null));
     const results = [];
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const movement = line.locationId
         ? await moveOne(req, { itemId: line.itemId, quantity: line.quantity, fromLocationId: line.locationId, fromEventId: line.fromEventId ?? null, toLocationId: line.toLocationId, toEventId: line.toEventId ?? null, note, batchId })
-        : await importOne(req, { itemId: line.itemId, toLocationId: line.toLocationId, toEventId: line.toEventId ?? null, quantity: line.quantity, note, batchId, temporary: !!line.temporary });
+        : await importOne(req, { itemId: line.itemId, toLocationId: line.toLocationId, toEventId: line.toEventId ?? null, quantity: line.quantity, note, batchId, temporary: !!line.temporary, expectedReturnAt: dueDates[i] });
       results.push(movement);
     }
     res.status(201).json({ batchId, movements: results });
@@ -195,14 +220,16 @@ async function moveOne(req, { itemId, quantity = 1, fromLocationId, fromEventId 
   });
 }
 
-async function importOne(req, { itemId, toLocationId, toEventId = null, quantity, note, batchId, temporary }) {
+async function importOne(req, { itemId, toLocationId, toEventId = null, quantity, note, batchId, temporary, expectedReturnAt = null }) {
   return prisma.$transaction(async (tx) => {
     const resolvedToEventId = await resolveDestinationEventId(tx, toLocationId, toEventId);
     if (temporary) {
+      const existing = await tx.stock.findUnique({ where: stockWhere(itemId, toLocationId, resolvedToEventId) });
+      const due = soonestDue(existing, expectedReturnAt);
       await tx.stock.upsert({
         where: stockWhere(itemId, toLocationId, resolvedToEventId),
-        update: { temporaryQuantity: { increment: quantity } },
-        create: { itemId, locationId: toLocationId, eventId: resolvedToEventId, eventKey: keyOf(resolvedToEventId), quantity: 0, temporaryQuantity: quantity },
+        update: { temporaryQuantity: { increment: quantity }, expectedReturnAt: due },
+        create: { itemId, locationId: toLocationId, eventId: resolvedToEventId, eventKey: keyOf(resolvedToEventId), quantity: 0, temporaryQuantity: quantity, expectedReturnAt: due },
       });
     } else {
       await tx.stock.upsert({
@@ -222,7 +249,12 @@ async function returnOne(req, { itemId, locationId, eventId = null, toLocationId
   return prisma.$transaction(async (tx) => {
     const stock = await tx.stock.findUnique({ where: stockWhere(itemId, locationId, eventId) });
     if (!stock || stock.temporaryQuantity < quantity) throw new HttpError(400, 'Δεν υπάρχει αρκετό δανεικό απόθεμα εκεί για επιστροφή.');
-    await tx.stock.update({ where: stockWhere(itemId, locationId, eventId), data: { temporaryQuantity: { decrement: quantity } } });
+    // Once the last borrowed unit is back there is nothing left to be due.
+    const allBack = stock.temporaryQuantity - quantity === 0;
+    await tx.stock.update({
+      where: stockWhere(itemId, locationId, eventId),
+      data: { temporaryQuantity: { decrement: quantity }, ...(allBack ? { expectedReturnAt: null } : {}) },
+    });
     const names = await snapshotNames(tx, req, { itemId, fromLocationId: locationId, toLocationId, eventId });
     return tx.movement.create({
       data: { itemId, quantity, fromLocationId: locationId, toLocationId, eventId, movedById: req.user.id, note, batchId, isTemporary: true, ...names },

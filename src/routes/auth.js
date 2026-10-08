@@ -63,6 +63,21 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// The app polls this to pick up role changes made by an admin. It leaves out
+// the photo on purpose, so the check stays tiny.
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, name: true, role: true },
+    });
+    if (!user) throw new HttpError(401, 'User no longer exists');
+    res.json(user);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 router.patch('/me/photo', requireAuth, async (req, res) => {
   try {
     const { photoUrl } = req.body;

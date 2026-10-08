@@ -25,7 +25,7 @@ async function requireAuth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
+      return res.status(403).json({ error: 'Δεν έχεις δικαίωμα για αυτή την ενέργεια.' });
     }
     next();
   };
